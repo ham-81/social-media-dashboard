@@ -118,20 +118,18 @@ print(f"✅ Generated {len(comments)} comments in 'comments.csv'")
 # Generate Sentiments
 # ========================
 sentiment_categories = ['Positive', 'Negative', 'Neutral']
-sentiments = []
+data = []
 for _ in range(NUM_SENTIMENTS):
-    sentiments.append({
-        'id': _ + 1,
-        'comment_id': random.randint(1, NUM_COMMENTS),
-        'sentiment_score': round(random.uniform(-1, 1), 2),
-        'category': random.choice(sentiment_categories)
-    })
+    post_id = random.randint(1,NUM_POSTS)
+    sentiment_score = round(random.uniform(-1, 1), 2)
+    category = random.choice(sentiment_categories)
+    data.append([post_id, sentiment_score, category])
 
-# Write to sentiments.csv
+# Write to CSV
 with open('sentiments.csv', 'w', newline='') as file:
-    writer = csv.DictWriter(file, fieldnames=sentiments[0].keys())
-    writer.writeheader()
-    writer.writerows(sentiments)
+    writer = csv.writer(file)
+    writer.writerow(['post_id', 'sentiment_score', 'category'])
+    writer.writerows(data)
 
-print(f"✅ Generated {len(sentiments)} sentiment records in 'sentiments.csv'")
+print(f"✅ Generated {len(data)} sentiment records in 'sentiments.csv'")
 
