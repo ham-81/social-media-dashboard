@@ -69,16 +69,16 @@ def create_top5():
     db.session.commit()
     return jsonify({'message': 'Top 5 posts updated'}), 201
 
-# READ API - Get top 4 posts based on engagement
+# READ API - Get top 5 posts based on engagement
 @app.route('/top5/read', methods=['GET'])
-def read_top4():
+def read_top5():
     query = """
         SELECT posts.post_id, posts.content, posts.likes_count, posts.shares_count
         FROM posts
         ORDER BY (posts.likes_count + posts.shares_count + 
                   (SELECT COUNT(*) FROM comments WHERE comments.post_id = posts.post_id) + 
                   (SELECT COUNT(*) FROM hashtags WHERE hashtags.post_id = posts.post_id)) DESC
-        LIMIT 4
+        LIMIT 5
     """
     top_posts = db.session.execute(query).fetchall()
 
