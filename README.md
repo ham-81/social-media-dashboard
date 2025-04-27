@@ -4,7 +4,7 @@ The Social Media Analysis Dashboard is a web-based application designed to visua
 
 The application is built using a PostgreSQL database, a Flask backend API, and a React frontend.
 
-Features
+#Features
 Engagement Analysis: Displays charts that represent user interactions, such as likes, shares, and comments.
 
 Top Posts: Lists the top 5 posts based on engagement metrics.
