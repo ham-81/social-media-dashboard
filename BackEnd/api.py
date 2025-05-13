@@ -1,38 +1,17 @@
-from flask import Flask, request, jsonify,render_template
+from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.sql import text  # Import text() for raw SQL queries
-from datetime import datetime
-from flask_cors import CORS
-from sqlalchemy.sql import text
-from sqlalchemy import func
-from flask_cors import CORS
-from sqlalchemy import and_, func, Date, cast
-from sqlalchemy.orm import aliased
-from datetime import datetime, timedelta
-
-
-app = Flask(__name__)
-CORS(app)
-
 
 import logging
 logging.basicConfig(level=logging.DEBUG)
 
-
+app = Flask(__name__)
 
 # Database Configuration (PostgreSQL)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:postgres@localhost/social_media_db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:Advaith007@localhost/social_media_analytics'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
-
-class SentimentAnalysis(db.Model):
-    __tablename__ = 'sentiment_analysis'
-    
-    post_id = db.Column(db.Integer, db.ForeignKey('posts.post_id'), primary_key=True)
-    sentiment_score = db.Column(db.Float)
-    category = db.Column(db.String(50))
-
 
 # Define Database Models
 class Users(db.Model):
@@ -68,28 +47,6 @@ class Top5(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     post_id = db.Column(db.Integer, db.ForeignKey('posts.post_id'), unique=True)
     rank = db.Column(db.Integer)
-
-@app.route('/')
-def home():
-    routes = [
-        ("/static/<path:filename>", "Static Files"),
-        ("/posts/create", "Create Post"),
-        ("/like", "Like Post"),
-        ("/share", "Share Post"),
-        ("/comment", "Add Comment"),
-        ("/comment/<int:comment_id>", "Delete Comment"),
-        ("/top5/create", "Create Top 5"),
-        ("/top5/update", "Update Top 5"),
-        ("/top5/delete", "Delete Top 5"),
-        ("/engagement/timeline", "Engagement Timeline"),
-        ("/top5/sentiment/posts", "Sentiment for Top 5 Posts"),
-        ("/recent/posts", "Recent Posts"),
-        ("/top5/users", "Top 5 Users"),
-        ("/top5/read", "Read Top 5")
-        
-    ]
-    return render_template('home.html', routes=routes)
-
 
 # CREATE POST API
 @app.route('/posts/create', methods=['POST'])
@@ -166,172 +123,6 @@ def create_top5():
     db.session.commit()
     return jsonify({'message': 'Top 5 posts updated'}), 201
 
-#Engagement
-@app.route('/engagement/timeline', methods=['GET'])
-def engagement_timeline():
-    query = text("""
-        WITH post_engagement AS (
-            SELECT DATE(timestamp) AS date,
-                   SUM(likes_count) AS total_likes,
-                   SUM(shares_count) AS total_shares
-            FROM posts
-            GROUP BY DATE(timestamp)
-        ),
-        comment_engagement AS (
-            SELECT DATE(timestamp) AS date,
-                   COUNT(*) AS total_comments
-            FROM comments
-            GROUP BY DATE(timestamp)
-        ),
-        hashtag_engagement AS (
-            SELECT DATE(timestamp) AS date,
-                   COUNT(*) AS total_hashtags
-            FROM hashtags
-            GROUP BY DATE(timestamp)
-        )
-        SELECT 
-            p.date,
-            COALESCE(p.total_likes, 0) + 
-            COALESCE(p.total_shares, 0) + 
-            COALESCE(c.total_comments, 0) + 
-            COALESCE(h.total_hashtags, 0) AS engagement
-        FROM post_engagement p
-        LEFT JOIN comment_engagement c ON p.date = c.date
-        LEFT JOIN hashtag_engagement h ON p.date = h.date
-        ORDER BY p.date
-    """)
-    
-    result = db.session.execute(query).fetchall()
-    timeline = [{"date": str(row[0]), "engagement": int(row[1])} for row in result]
-    total_engagement = sum(item["engagement"] for item in timeline)
-    
-    return jsonify({
-        "timeline": timeline,
-        "total_engagement": total_engagement
-    })
-
-
-#Get Sentiment Analysis
-from sqlalchemy import text, func
-
-@app.route('/top5/sentiment/posts', methods=['GET'])
-def get_top5_post_sentiments():
-    # Step 1: Get top 5 posts based on total engagement (likes + shares + comments)
-    top_posts = db.session.execute(text("""
-        SELECT 
-            p.post_id,
-            p.content,
-            (p.likes_count + p.shares_count + COALESCE(c.comment_count, 0)) AS engagement
-        FROM posts p
-        LEFT JOIN (
-            SELECT post_id, COUNT(*) AS comment_count
-            FROM comments
-            GROUP BY post_id
-        ) c ON p.post_id = c.post_id
-        ORDER BY engagement DESC
-        LIMIT 5
-    """)).fetchall()
-
-    post_ids = [row.post_id for row in top_posts]
-
-    # Step 2: Get sentiment scores for these posts
-    sentiment_data = db.session.query(
-        SentimentAnalysis.post_id,
-        SentimentAnalysis.category,
-        func.avg(SentimentAnalysis.sentiment_score).label("avg_score")
-    ).filter(SentimentAnalysis.post_id.in_(post_ids))\
-     .group_by(SentimentAnalysis.post_id, SentimentAnalysis.category).all()
-
-    # Step 3: Structure the response
-    sentiment_map = {}
-    for row in sentiment_data:
-        if row.post_id not in sentiment_map:
-            sentiment_map[row.post_id] = {}
-        sentiment_map[row.post_id][row.category.lower()] = round(row.avg_score, 2)
-
-    response = []
-    for row in top_posts:
-        sentiments = sentiment_map.get(row.post_id, {})
-        response.append({
-            "post_id": row.post_id,
-            "content": row.content,
-            "sentiments": {
-                "positive": sentiments.get("positive", 0),
-                "neutral": sentiments.get("neutral", 0),
-                "negative": sentiments.get("negative", 0)
-            }
-        })
-
-    return jsonify(response)
-
-#Get user details of a user
-@app.route('/user/<int:user_id>', methods=['GET'])
-def get_user(user_id):
-    query = text("SELECT name FROM users WHERE user_id = :user_id")
-    result = db.session.execute(query, {'user_id': user_id}).fetchone()
-    if result:
-        return jsonify({"name": result[0]})
-    return jsonify({"error": "User not found"}), 404
-
-#Get Recent Posts
-@app.route('/recent/posts',methods=['GET'])
-def get_recent_posts():
-    query = text("""
-        SELECT p.post_id, p.content, p.timestamp, u.name AS username
-        FROM posts p
-        JOIN users u ON p.user_id = u.user_id
-        ORDER BY p.timestamp DESC
-        LIMIT 5
-    """)
-
-    result = db.session.execute(query)
-    
-    posts = [
-        {
-            "post_id": row.post_id,
-            "content": row.content,
-            "timestamp": row.timestamp.strftime("%Y-%m-%d %H:%M"),
-            "username": row.username
-        }
-        for row in result
-    ]
-    return jsonify(posts)
-
-#Get top 5 Users based on engagement
-@app.route('/top5/users',methods=['GET'])
-def get_top_users():
-    query = text("""
-        SELECT 
-            u.user_id,
-            u.name,
-            COALESCE(SUM(p.likes_count), 0) AS total_likes,
-            COALESCE(SUM(p.shares_count), 0) AS total_shares,
-            COALESCE(COUNT(c.comment_id), 0) AS total_comments,
-            COALESCE(SUM(p.likes_count), 0) + COALESCE(SUM(p.shares_count), 0) + COALESCE(COUNT(c.comment_id), 0) AS total_engagement
-        FROM users u
-        LEFT JOIN posts p ON u.user_id = p.user_id
-        LEFT JOIN comments c ON p.post_id = c.post_id
-        GROUP BY u.user_id, u.name
-        ORDER BY total_engagement DESC
-        LIMIT 5;
-    """)
-
-    result = db.session.execute(query).fetchall()
-
-    top_users = [
-        {
-            "user_id": row.user_id,
-            "name": row.name,
-            "likes": row.total_likes,
-            "shares": row.total_shares,
-            "comments": row.total_comments,
-            "total_engagement": row.total_engagement
-        }
-        for row in result
-    ]
-
-    return jsonify(top_users)
-
 # READ API - Get top 5 posts based on engagement
 @app.route('/top5/read', methods=['GET'])
 def read_top5():
@@ -357,6 +148,23 @@ def update_top5():
 @app.route('/top5/delete', methods=['DELETE'])
 def delete_top5_entry():
     return create_top5()  # Re-run the logic
+
+@app.route('/')
+def home():
+    return '''
+    <html>
+    <head>
+        <title>API Home</title>
+    </head>
+    <body>
+        <h1>Welcome to the Social Media Analytics API</h1>
+        <p>Click the button below to view the Top 5 Posts.</p>
+        <button onclick="window.location.href='/top5/read';">
+            View Top 5 Posts
+        </button>
+    </body>
+    </html>
+    '''
 
 from nltk.sentiment import SentimentIntensityAnalyzer
 import nltk
@@ -422,204 +230,8 @@ def top5_comments_sentiment():
 
     return jsonify(results)
 
-
-
-@app.route('/engagement/timeline/<int:user_id>', methods=['GET'])
-def engagement_timeline_user(user_id):
-    try:
-        # Get actual activity dates from database
-        post_dates = db.session.query(
-            func.date_trunc('day', Posts.timestamp).label('date')
-        ).filter(Posts.user_id == user_id).distinct()
-
-        comment_dates = db.session.query(
-            func.date_trunc('day', Comments.timestamp).label('date')
-        ).filter(Comments.user_id == user_id).distinct()
-
-        # Combine and sort unique dates
-        all_dates = {row.date.date() for row in post_dates.union(comment_dates).all()}
-        
-        # Create timeline with actual activity
-        timeline = []
-        for single_date in sorted(all_dates):
-            posts = db.session.query(
-                func.coalesce(func.sum(Posts.likes_count + Posts.shares_count), 0)
-            ).filter(
-                Posts.user_id == user_id,
-                func.date_trunc('day', Posts.timestamp) == single_date
-            ).scalar()
-
-            comments = db.session.query(
-                func.count(Comments.comment_id)
-            ).filter(
-                Comments.user_id == user_id,
-                func.date_trunc('day', Comments.timestamp) == single_date
-            ).scalar()
-
-            timeline.append({
-                "date": single_date.isoformat(),
-                "engagement": posts + comments
-            })
-
-        # Calculate total engagement
-        total_engagement = sum(item["engagement"] for item in timeline)
-        
-        return jsonify({
-            "timeline": timeline,
-            "total_engagement": total_engagement,
-            "message": f"Found {len(timeline)} active days for user {user_id}"
-        })
-
-    except Exception as e:
-        app.logger.error(f"Error: {str(e)}")
-        return jsonify({
-            "error": "Internal server error",
-            "message": str(e),
-            "timeline": [],
-            "total_engagement": 0
-        }), 500
-
-
-
-
-@app.route('/recent/posts/<int:user_id>', methods=['GET'])
-def get_recent_posts_user(user_id):
-    query = text("""
-        SELECT p.post_id, p.content, p.timestamp, u.name AS username
-        FROM posts p
-        JOIN users u ON p.user_id = u.user_id
-        WHERE p.user_id = :user_id
-        ORDER BY p.timestamp DESC
-        LIMIT 5
-    """)
-    result = db.session.execute(query, {'user_id': user_id})
-    
-    posts = [
-        {
-            "post_id": row.post_id,
-            "content": row.content,
-            "timestamp": row.timestamp.strftime("%Y-%m-%d %H:%M"),
-            "username": row.username
-        }
-        for row in result
-    ]
-    return jsonify(posts)
-@app.route('/top5/posts/<int:user_id>', methods=['GET'])
-def get_top5_posts_user(user_id):
-    query = text("""
-        SELECT posts.post_id, posts.content, 
-               (posts.likes_count + posts.shares_count + 
-                (SELECT COUNT(*) FROM comments WHERE comments.post_id = posts.post_id)) AS engagement
-        FROM posts
-        WHERE posts.user_id = :user_id
-        ORDER BY engagement DESC
-        LIMIT 5
-    """)
-    result = db.session.execute(query, {'user_id': user_id}).fetchall()
-    
-    top_posts = [
-        {
-            "post_id": row.post_id,
-            "content": row.content,
-            "engagement": row.engagement
-        }
-        for row in result
-    ]
-    return jsonify(top_posts)
-@app.route('/top5/sentiment/posts/<int:user_id>', methods=['GET'])
-def get_top5_post_sentiments_user(user_id):
-    top_posts_query = text("""
-        SELECT 
-            p.post_id,
-            p.content,
-            (p.likes_count + p.shares_count + COALESCE(c.comment_count, 0)) AS engagement
-        FROM posts p
-        LEFT JOIN (
-            SELECT post_id, COUNT(*) AS comment_count
-            FROM comments
-            GROUP BY post_id
-        ) c ON p.post_id = c.post_id
-        WHERE p.user_id = :user_id
-        ORDER BY engagement DESC
-        LIMIT 5
-    """)
-    
-    top_posts = db.session.execute(top_posts_query, {'user_id': user_id}).fetchall()
-    post_ids = [row.post_id for row in top_posts]
-    
-    sentiment_data_query = db.session.query(
-        SentimentAnalysis.post_id,
-        SentimentAnalysis.category,
-        func.avg(SentimentAnalysis.sentiment_score).label("avg_score")
-    ).filter(SentimentAnalysis.post_id.in_(post_ids))\
-     .group_by(SentimentAnalysis.post_id, SentimentAnalysis.category).all()
-
-    sentiment_map = {}
-    for row in sentiment_data_query:
-        if row.post_id not in sentiment_map:
-            sentiment_map[row.post_id] = {}
-        sentiment_map[row.post_id][row.category.lower()] = round(row.avg_score, 2)
-
-    response = []
-    for row in top_posts:
-        sentiments = sentiment_map.get(row.post_id, {})
-        response.append({
-            "post_id": row.post_id,
-            "content": row.content,
-            "sentiments": {
-                "positive": sentiments.get("positive", 0),
-                "neutral": sentiments.get("neutral", 0),
-                "negative": sentiments.get("negative", 0)
-            }
-        })
-
-    return jsonify(response)
-
-@app.route('/top5/comments/user/<int:user_id>', methods=['GET'])
-def get_user_top_comments(user_id):
-    try:
-        # Get all posts by the user
-        user_posts = db.session.query(Posts.post_id).filter(Posts.user_id == user_id).all()
-        post_ids = [post.post_id for post in user_posts]
-
-        if not post_ids:
-            return jsonify({"message": "No posts found for this user", "comments": []})
-
-        # Get top 5 comments for these posts
-        comments_query = text("""
-            SELECT c.comment_id, c.comment_text, c.timestamp, p.content AS post_content
-            FROM comments c
-            JOIN posts p ON c.post_id = p.post_id
-            WHERE c.post_id IN :post_ids
-            ORDER BY c.timestamp DESC
-            LIMIT 5
-        """)
-        comments = db.session.execute(comments_query, {'post_ids': tuple(post_ids)}).fetchall()
-
-        formatted_comments = [{
-            "comment_id": row.comment_id,
-            "comment_text": row.comment_text,
-            "timestamp": row.timestamp.strftime("%Y-%m-%d %H:%M"),
-            "post_content": row.post_content
-        } for row in comments]
-
-        return jsonify({"comments": formatted_comments})
-
-    except Exception as e:
-        app.logger.error(f"Error fetching comments for user {user_id}: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def serve_react_app(path):
-    return render_template('index.html')
-
-
 if __name__ == '__main__':
     with app.app_context():
-        db.create_all()
-    print("Running on http://localhost:5001")
-    print("Registered Routes:")
-    for rule in app.url_map.iter_rules():
-        print(rule)
+        db.create_all()  # Create tables if they don't exist
     app.run(debug=True, port=5001)
+
